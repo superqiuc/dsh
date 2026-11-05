@@ -1,0 +1,570 @@
+/* Tailwind CSS v4 入口：以 CSS-first 方式引入，替代 v3 的 @tailwind 三指令。 */
+@import "tailwindcss";
+
+/* 显式声明内容源（相对本 CSS 文件所在目录 src/）：
+   index.html 在 frontend 根、组件在 src/ 下。v4 的 @tailwindcss/postcss
+   会自动源检测，这里显式声明以保证 .vue/.ts/.js 里的类万无一失地被扫描。 */
+@source "../index.html";
+@source "./**/*.{vue,ts,js,jsx,tsx}";
+
+/* 暗色模式：class 策略（对应 <html class="dark">，与原 darkMode:'class' 等价）。 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Genesis 设计令牌：从 v3 的 tailwind.config.js theme.extend 迁移到 v4 的 @theme。
+   变量命名规则：--color-* / --font-* / --shadow-* / --max-width-*。 */
+@theme {
+  /* ===== 颜色 ===== */
+  /* 品牌主色（indigo） */
+  --color-brand: #6366F1;
+  --color-brand-hover: #4F46E5;
+  --color-brand-soft: rgba(99, 102, 241, 0.12);
+  /* 语义色 */
+  --color-success: #10B981;
+  /* 警告色在浅色下取深一档的琥珀（#D97706）：按钮边框是「非文本 UI」，
+     亮黄 #F59E0B 放在白底上只有 2.15:1（低于 3:1），加深后既保住黄色调
+     又让轮廓清楚。深色主题在 html.dark 里换回 #F59E0B（深底上亮黄才够亮）。 */
+  --color-warning: #D97706;
+  --color-danger: #EF4444;
+  /* 语义色的**文字**版本：浅色主题下上面的亮色放在白底上对比度只有 2.1–2.5:1，
+     不满足 WCAG AA（正文/小字 4.5:1）。填充、圆点、边框继续用亮色 token，
+     只有文字用 *-ink；深色主题在下面的 .dark 里把 *-ink 换回亮色。
+
+     取值口径：同色相下挑 chroma（饱和度）尽量高的一档，同时保证在白底、
+     #FAFAFA 页面底和 bg-black/[0.03] 浅灰面板上都 ≥ 4.5:1。原来的 700 系
+     （#047857 / #B45309 / #B91C1C）对比够但灰调重，浅色模式看起来发闷。 */
+  --color-success-ink: #0B7A3B;
+  --color-warning-ink: #C2410C;
+  --color-danger-ink: #CC0000;
+  /* 中性层：背景 / 表面 / 边框 / 文本 */
+  --color-bg: #FAFAFA;
+  --color-surface: #FFFFFF;
+  --color-line: #E8E8EC;
+  --color-ink: #0A0A0A;
+  --color-ink-soft: #6B6B6B;
+  /* #9C9C9C 在 #FAFAFA 上只有 2.63:1（提示文字/placeholder 也用它）。#737373 ≈ 4.54:1。 */
+  --color-ink-faint: #737373;
+
+  /* ===== 字体：全站统一用系统字体 =====
+     不再加载任何 Web 字体（原先正文/展示标题/代码分别是 DM Sans、General Sans、
+     JetBrains Mono 三套外链字体，见 index.html）。原因有两条：
+       1. 三套字体的来源与可用性各不相同 —— 只要其中一套加载失败或字形缺失，浏览器就按
+          字符回退到别的字体，同一个页面里会同时出现好几套字形；
+       2. 外链字体是首屏的额外网络依赖（设备在代理后面或离线时会卡在字体请求上）。
+     现在正文与标题共用系统 UI 字体（--font-sans / --font-display 同一套），代码、路径、
+     日志与终端用系统等宽字体（--font-mono）。三个 token 保留，是因为大量模板在用
+     font-sans / font-display / font-mono 工具类，改 token 即可全站生效。
+     注意：终端里 xterm 的 fontFamily（TerminalView.vue）是 JS 字符串、且用 canvas 量字宽，
+     取不到这里的 CSS 变量，那边手写的是同一套等宽栈 —— 改这里时请一并改那边。 */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Cascadia Mono',
+    'Noto Sans Mono CJK SC', 'PingFang SC', 'Microsoft YaHei', 'WenQuanYi Micro Hei', monospace;
+
+  /* ===== 阴影 ===== */
+  --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.08);
+  --shadow-glow: 0 4px 12px rgba(99, 102, 241, 0.35);
+  --shadow-pop: 0 10px 40px rgba(0, 0, 0, 0.12);
+
+  /* ===== 宽度 ===== */
+  --max-width-content: 1280px;
+}
+
+/* 深色主题的 token 覆盖：同一批类名（text-ink-faint / text-success-ink …）在两种主题下
+   各自满足对比度，调用处不用再逐条写 dark: 变体。深色背景是 #16161B（卡片）/ #0B0B0F（页面），
+   这里的亮色值在两者上都在 5:1 以上。--color-warning 也在这里换回亮黄：浅色下的 #D97706
+   是给白底边框用的深一档琥珀，放到深色背景上会发闷。 */
+html.dark {
+  --color-ink-faint: #8A8A92;
+  --color-warning: #F59E0B;
+  --color-success-ink: #10B981;
+  --color-warning-ink: #F59E0B;
+  --color-danger-ink: #EF4444;
+}
+
+/* 移动端底部导航的占用高度 = 内容高度 3.5rem + iOS 底部安全区（Home Indicator）。
+   App.vue 的导航条按同一式子增高、main 的高度按它扣减（移动端 main 就是「底栏上沿以上
+   的那块滚动区」，滚动条因此止于底栏上方、不会压到 fixed 底栏上），终端页高度也按它扣减，
+   几处必须保持一致。
+   注意 env(safe-area-inset-*) 需要 index.html 里 viewport-fit=cover 才返回非零值。
+   --kb-inset / --vv-h 由 useKeyboardInset 在键盘弹起时写入（分别是键盘遮挡高度与可视
+   视口高度）；键盘收起时前者为 0px、后者被移除。滚动过程不会改动它们，底栏因此始终
+   贴底不动。 */
+:root {
+  --bottom-nav-h: calc(3.5rem + env(safe-area-inset-bottom, 0px));
+  --kb-inset: 0px;
+  --vv-h: 100dvh;
+}
+
+/* 软键盘弹起（html[data-kb] 由 useKeyboardInset 写入）：键盘已经占掉屏幕下半部分，
+   这时把移动端底栏整体隐去、底部预留归零，并把终端页高度直接切成可视视口高度
+   （--vv-h）—— 功能键栏因此紧贴键盘顶边，终端区域也随之缩到键盘上方。
+   不写「100dvh - 键盘量」是因为 dvh 与布局视口的换算关系各浏览器不一致（iOS 的工具栏
+   高度会被多减/少减一截）。键盘收起后属性被移除，底栏与预留自动恢复。 */
+html[data-kb] {
+  --bottom-nav-h: 0px;
+}
+html[data-kb] .mobile-bottom-nav {
+  display: none;
+}
+html[data-kb] .terminal-page {
+  height: var(--vv-h);
+}
+/* 键盘弹起 + 终端页在场时，连滚动一起锁死。
+   终端页自身高度已经是可视视口高度（--vv-h），但 App 根节点的 min-h-screen 与 main 给
+   键盘预留的 padding-bottom（--kb-inset）仍可能让外层比可视视口高出一截 —— 手指在终端上
+   拖拽时浏览器会顺着祖先链滚到外层容器上，整个终端页（含底部辅助键栏）被拖着上移，键栏
+   就不再贴着键盘顶边。html/body 一起设 overflow:hidden，超出的那截直接裁掉、不参与滚动。
+   用 :has(.terminal-page) 限定范围：终端页被 KeepAlive 切走后其 DOM 不在文档里，选择器
+   自然不匹配；其它页面键盘弹起时仍需正常滚动（要能滚到被键盘挡住的输入框）。
+   overscroll-behavior 阻断「滚到边界继续传给上层容器」的链式滚动。
+
+   另外把 main（移动端唯一的滚动容器，见 App.vue）退回内容高度：文档锁死之后，能滚的
+   就只剩它了。刻意用 height: auto 而不是 overflow: hidden —— 某些机型上「--vv-h 比
+   main 的内容盒（100dvh − --kb-inset）略大」，裁剪会把底部辅助键栏切掉，而 h-auto 下
+   main 的 scrollHeight 恒等于 clientHeight，本来就没有可滚动区域。 */
+html[data-kb]:has(.terminal-page),
+html[data-kb]:has(.terminal-page) body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+html[data-kb]:has(.terminal-page) main {
+  height: auto;
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+/* ===== Genesis 基础排版 ===== */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #FAFAFA;
+  color: #0A0A0A;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* 展示标题：与正文同一套系统字体（原先的 General Sans 已移除），只保留紧字距 */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+/* 触屏设备（含 iPad）上把可聚焦控件的字号钉在 16px 下限：iOS Safari 聚焦 font-size
+   < 16px 的输入框时会自动放大整页（聚焦后页面被放大、可视区跑偏），而本项目 body 是
+   15px、.g-input 用的是 text-sm（14px），都落在触发区间内。桌面端（pointer: fine）
+   不受影响，观感不变；用 !important 是因为 Tailwind 的 text-sm 等工具类优先级更高，
+   这里必须压过它们。选择器覆盖 textarea 是刻意的：终端里 xterm 的隐藏 textarea 与
+   粘贴用的临时 textarea 同样会触发缩放。
+   这里只按 pointer 判定、不叠加宽度条件：Tailwind v4 会把 max-width 这类连续特性改写成
+   `width<=1024px` 区间语法（Safari 16.4+ 才支持），老机型（如 iOS 15/16.0 的 iPad）会
+   整块丢弃该规则，而这恰恰是最需要这条修复的设备。
+   **输入框上不要用带 !important 的字号工具类**（如 `!text-xs`）：那会压过这里的 16px，
+   把 iOS 聚焦缩放的问题又带回来（账户弹窗的授权链接 / 回调链接输入框就是这样踩过的）。
+   需要桌面小字号时用普通工具类（`text-xs`）即可 —— 它在 utilities 层，照常压过
+   `.g-input` 的 text-sm，但压不过本规则。 */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* 代码/路径/键值：系统等宽字体（原先的 JetBrains Mono 已移除） */
+.font-mono, code, kbd, pre, samp {
+  font-family: var(--font-mono);
+}
+
+/* 暗色模式基础背景 */
+.dark body {
+  background-color: #0B0B0F;
+  color: #EDEDF0;
+}
+
+/* 焦点环：3px 品牌色淡环 */
+*:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  border-radius: 6px;
+}
+
+/* 终端容器（xterm 挂载点）：只负责铺满外框，尺寸全部交给 xterm 自己管理。
+   touch-action: none —— 触摸滚动由 TerminalView 自己实现（xterm 不处理触摸，那个
+   可滚动的 .xterm-viewport 又是屏幕层的兄弟节点，浏览器会把拖拽升级成「滚文档」）。
+   这里在触摸起始就把浏览器的平移/缩放手势关掉，滚动本身交给 scrollLines()；
+   配合 onTouchMove 里的 preventDefault 双保险，避免手指一拖整页跟着上滚。 */
+.term-container {
+  height: 100%;
+  width: 100%;
+  touch-action: none;
+}
+/* 终端复制/粘贴反馈气泡 */
+.term-copy-toast {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 30;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: rgba(10, 10, 10, 0.78);
+  color: #ffffff;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+/* 注意：不要给 .term-container（xterm 挂载点）设置 border / padding / margin。
+   FitAddon 是按挂载点父元素 computedStyle 的 height / width 估算行列数的，而
+   Tailwind 全局 box-sizing:border-box 下 Chrome 系浏览器返回的是 border-box 尺寸
+   （含边框与内边距），这部分空间会被误当成可绘制区，网格随之超高/超宽，最后一行
+   被排到内缩区并由 overflow:hidden 裁掉（表现为终端底部消息被页面底框遮挡）。
+   需要“内缩留白”时，请像 TerminalView 那样在外层包一个只带 padding 的容器。 */
+
+.icon-svg {
+  display: inline-block;
+  flex-shrink: 0;
+}
+.icon-svg svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 禁止水平滑动切换页面，防止移动端手势回退 */
+html, body {
+  overscroll-behavior-x: none;
+  touch-action: pan-y; /* 仅允许垂直滚动 */
+}
+
+/* ===== 不确定进度条（indeterminate） =====
+   更新包下载时若服务端未返回 Content-Length（totalBytes=0），无法计算百分比。
+   此时不能用固定宽度（如 50%）占位——那会让进度条看起来“卡在 50%”，与实际
+   进度无关。改用一条来回滑动的窄条表示“进行中但总量未知”。
+   轨道需 overflow:hidden，窄条按轨道宽度的 40% 往返平移。 */
+.progress-indeterminate {
+  width: 40%;
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
+@keyframes progress-indeterminate {
+  /* 起点：窄条完全移出轨道左侧（-100% 自身宽度） */
+  0% {
+    transform: translateX(-100%);
+  }
+  /* 终点：窄条完全移出轨道右侧（100% 轨道宽 = 250% 自身宽） */
+  100% {
+    transform: translateX(250%);
+  }
+}
+/* 尊重系统的“减少动态效果”偏好：改为静态半透明条，避免动画引发不适 */
+@media (prefers-reduced-motion: reduce) {
+  .progress-indeterminate {
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
+}
+
+/* ===== 卡片入场动画 =====
+   整块内容（列表刷新、切换子页面）淡入 + 轻微上移，避免逐项动画造成的闪烁。
+   只作用于容器，不作用于单个卡片，列表数据刷新时不会重放。 */
+@keyframes g-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-fade-in {
+    animation: none;
+  }
+}
+
+/* ===== 可复用组件类 ===== */
+@layer components {
+  /* 卡片：白色表面、1px 细边框、12px 圆角、悬浮上移 + 轻投影 */
+  .g-card {
+    @apply bg-white dark:bg-[#16161B] border border-[#E8E8EC] dark:border-[#2A2A32]
+      rounded-xl transition-all duration-200;
+  }
+  .g-card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+  }
+
+  /* 自适应卡片栅格（概览 / 设置 / 目录 / 插件页共用）：
+     `auto-fit` 按容器可用宽度自动决定列数，每列最小 19rem（≈304px），容器变宽就自动
+     加列、变窄就自动减列，无需为每个页面写一串断点。下限写成 `min(100%, 19rem)`：
+     容器本身比 19rem 还窄时（手机 + 内边距）用容器宽度兜底，不会横向溢出。
+     子项默认 stretch：同一行的卡片等高（想要内容高度、上下不齐时改用 items-start）；
+     卡内可用 `flex flex-col` + `mt-auto` 把操作行压到卡片底部，整行对齐。 */
+  .g-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+    gap: 1rem;
+  }
+
+  /* 桌面固定两列（概览页与设置页的四张桌面卡片，均按 2×2 排布）。
+     覆盖写在 md（768px）以上，窄屏依旧沿用 .g-card-grid 的自适应列数 —— 手机上就是单列，
+     因此不需要另写一套 1 列规则。选择器带上 .g-card-grid 提高特异性，避免依赖声明顺序。 */
+  @media (min-width: 768px) {
+    .g-card-grid.g-card-grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  /* 入场动画容器：配合上面的 @keyframes，统一时长与缓动 */
+  .g-fade-in {
+    animation: g-fade-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .g-fade-in {
+      animation: none;
+    }
+  }
+
+  /* 主按钮：indigo 填充、白字、6px 圆角、悬浮辉光 + 上移 1px */
+  .g-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 bg-brand hover:bg-brand-hover
+      text-white font-medium rounded-md px-4 h-10 text-sm
+      disabled:opacity-50 disabled:cursor-not-allowed
+      transition-all duration-150;
+  }
+  .g-btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99,102,241,0.35);
+  }
+
+  /* 次按钮：透明 + 1px 边框 */
+  .g-btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 bg-transparent
+      border border-[#E8E8EC] dark:border-[#2A2A32] text-ink dark:text-[#EDEDF0]
+      font-medium rounded-md px-4 h-10 text-sm
+      hover:bg-black/5 dark:hover:bg-white/5
+      disabled:opacity-50 disabled:cursor-not-allowed
+      transition-all duration-150;
+  }
+  .g-btn-secondary:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  /* 幽灵按钮：无边框无底色 */
+  .g-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 text-ink-soft
+      font-medium rounded-md px-3 h-9 text-sm
+      hover:text-ink hover:bg-black/5 dark:text-[#A6A6AD] dark:hover:text-white dark:hover:bg-white/5
+      transition-colors duration-150;
+  }
+
+  /* 危险按钮：红字红框。边框也用 *-ink：浅色下比亮红更深、与文字同色系，
+     按钮的轮廓因此更清楚；深色下 *-ink 就是亮红（见 html.dark），与原来的
+     border-danger 完全一致，深色主题的观感不变。 */
+  .g-btn-danger {
+    @apply inline-flex items-center justify-center gap-2 bg-transparent
+      border border-danger-ink text-danger-ink
+      font-medium rounded-md px-4 h-10 text-sm
+      hover:bg-danger/10
+      disabled:opacity-50 disabled:cursor-not-allowed
+      transition-all duration-150;
+  }
+  .g-btn-danger:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  /* 警告按钮：橙字橙框（同危险按钮结构，仅颜色不同）。边框用 --color-warning：
+     浅色下是深一档的琥珀 #D97706，深色下由 html.dark 换回亮黄 #F59E0B。 */
+  .g-btn-warning {
+    @apply inline-flex items-center justify-center gap-2 bg-transparent
+      border border-warning text-warning-ink
+      font-medium rounded-md px-4 h-10 text-sm
+      hover:bg-warning/10
+      disabled:opacity-50 disabled:cursor-not-allowed
+      transition-all duration-150;
+  }
+  .g-btn-warning:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+
+  /* 输入框 */
+  .g-input {
+    @apply w-full bg-surface border border-[#E8E8EC] dark:border-[#2A2A32] dark:bg-[#16161B]
+      rounded-md px-3.5 py-2.5 text-sm text-ink dark:text-[#EDEDF0] placeholder:text-ink-faint
+      outline-none transition-all duration-150;
+  }
+  .g-input:focus {
+    border-color: #6366F1;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+  }
+  .g-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  /* 数字输入框：隐藏浏览器原生步进器（设置页的 dsh 端口 / 反代端口 / 内存上限 /
+     登录有效期）。只去掉上下箭头控件，保留 type="number" 的语义 —— 移动端数字键盘、
+     min/max 校验与键盘 ↑/↓ 调整照常生效，避免鼠标误点箭头改掉端口这类关键值。
+     Firefox 用 appearance: textfield 去除步进器，WebKit/Blink 走 ::-webkit-*-spin-button。 */
+  .g-input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  .g-input[type='number']::-webkit-outer-spin-button,
+  .g-input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+
+  /* 标签 chip：胶囊形状 */
+  .g-chip {
+    @apply inline-flex items-center gap-1 rounded-full bg-black/5 dark:bg-white/10
+      text-ink-soft dark:text-[#B0B0B8] px-3 py-1 text-xs font-medium whitespace-nowrap;
+  }
+  .g-chip-active {
+    @apply bg-brand text-white;
+  }
+
+  /* 状态 chip：胶囊 + 语义色 */
+  .g-status {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
+  }
+
+  /* ===== 弹窗统一结构（配合 components/DialogCloseButton.vue） =====
+     弹窗标题用 .g-dialog-title（统一字号/字重/前景色，并给右上角 X 留出位置），
+     关闭按钮统一用 <DialogCloseButton>（内部就是 .g-dialog-close，绝对定位到右上角），
+     底部操作行用 .g-dialog-actions（统一右对齐与间距）。
+     弹窗里的按钮一律**带边框、不填充底色、同一档字号**：
+       - 普通操作：g-btn-secondary
+       - 危险操作（删除/取消下载/丢弃等）：g-btn-danger
+     不要再在弹窗里写 g-btn-primary（填充品牌色）或自创尺寸 —— 之前各弹窗的确认按钮
+     有的是填充色、有的是纯文字，看起来像两套 UI。
+
+     弹窗**正文只分两档**（别在 text-xs / text-sm 之外再自创第三档，也别把正文写小一号）：
+       - 主要信息（状态行、说明句、正文段落、更新内容）：text-sm + text-ink-soft
+         dark:text-[#A6A6AD]（多行正文配 leading-relaxed）；
+       - 次要信息（版本号/字节数等元信息、小标题、标签）：text-xs + text-ink-faint
+         dark:text-[#8A8A92]。
+     错误/提示框仍用 text-xs + 语义色底与边框（见 MarketDialog / ServerVersionsDialog）。
+     踩过的坑：更新弹窗把 release 正文写在 text-xs 容器里（"紧凑"），同一屏里版本行却是
+     text-sm，于是正文比元信息还小 —— 它现在和其它弹窗的正文同档（见 UpdateSection.vue）。
+
+     X 与标题「同一行居中」靠三个固定量达成，改任一处都要一起改：
+       - .g-dialog-title 行高固定 2rem（= 32px）→ 标题行就是一条 32px 的带；
+       - .g-dialog-close 32px 见方 → 与标题行同高；
+       - .g-dialog-close 的 top 取 1.5rem（= p-6 的 24px 内边距）→ 与标题行同顶。
+     为什么要凑这三个数：绝对定位的 top 以弹窗的**内边距盒**为基准，而标题（第一个在流内
+     的子元素）从**内容盒**起算，两者差着一个 padding —— 原来写 top-3 时 X 的中心比标题
+     中心高 10px（视觉上 X 明显偏上，与标题不在同一行）。
+     例外：标题栏式弹窗（标题自带 px-5 py-3 头部条、没有 p-6 内边距，如 QuickCmdsDialog）
+     要自己传 class="top-3" 把 X 对到那条 32px 头部条上 —— 见该组件的注释。 */
+  .g-dialog-title {
+    @apply font-display text-lg font-semibold text-ink dark:text-white pr-11;
+    /* 行高固定 2rem（= 32px），与 .g-dialog-close 同高，X 才好与标题同行居中 */
+    line-height: 2rem;
+  }
+  .g-dialog-close {
+    @apply absolute right-3 top-6 inline-flex items-center justify-center w-8 h-8 rounded-md
+      bg-transparent text-ink-soft dark:text-[#A6A6AD]
+      hover:text-ink dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5
+      disabled:opacity-40 disabled:cursor-not-allowed transition-colors;
+  }
+  .g-dialog-actions {
+    @apply flex justify-end gap-3 mt-6;
+  }
+
+  /* 弹窗遮罩：只负责压暗（半透明黑）与吃掉触摸拖拽。
+     背景模糊不在这一层，而在弹窗容器（Transition 根）上 —— 即 .vue 里的
+     `fixed inset-0 ... backdrop-blur-sm`。踩过的坑：Chromium 下 backdrop-filter
+     的元素一旦处在「正在做 opacity 动画的祖先」里，模糊会推迟到动画结束才生效，
+     表现为遮罩先到、模糊慢半拍地“啪”一下出现；而该元素自己既做 opacity 动画
+     又带 backdrop-filter 是正常的（已实测对比四种结构）。所以：blur 放容器、
+     压暗放遮罩，别再把 backdrop-blur 加回遮罩子元素上。
+     触摸设备上从遮罩起手的拖拽不再滚动页面；页面滚动的彻底锁定由
+     useBodyScrollLock 负责（弹窗打开时调用）。 */
+  .g-modal-mask {
+    @apply absolute inset-0 bg-black/50;
+    touch-action: none;
+  }
+}
+/* ===== 日志区域：底色与行色都跟随主题 =====
+   浅色主题「浅底深字」、暗色主题「深底浅字」；行级色（WARN / ERROR / dsh 子进程输出）
+   同样各一套 —— 暗色主题那套亮黄/亮红放到浅底上会发白、几乎看不清，所以浅色主题用深一档
+   的语义色。这几条刻意放在 @layer 之外：它们要盖过 Tailwind 工具类写死的前景色，
+   且 .dark 变体是自己写的，不依赖 utilities 层的生成顺序。
+   类名由 LogView 的行着色逻辑给出（见 LEVEL_CLASS / DSH_CLASS）。 */
+.log-viewer {
+  background-color: #f7f8fa;
+  color: #33373d;
+}
+.dark .log-viewer {
+  background-color: #0f1115;
+  color: #d6dce4;
+}
+.log-line-warn {
+  /* 浅色语义色统一取 *-ink（见 @theme），别在这里再写一份十六进制 */
+  color: var(--color-warning-ink);
+}
+.dark .log-line-warn {
+  color: #fbbf24;
+}
+.log-line-error {
+  color: #dc2626;
+}
+.dark .log-line-error {
+  color: #f87171;
+}
+.log-line-dsh {
+  color: #a16207;
+}
+.dark .log-line-dsh {
+  color: #facc15;
+}
+
+/* ===== 全局文本选择策略 =====
+   控制台是「应用式」UI：默认全局禁止文本选择 —— 拖动/长按不会误选中一片文字（触屏上还会
+   弹出系统选择菜单，与终端的长按粘贴、键条的长按连发互相干扰）。只有明确需要复制的地方
+   用 Tailwind 的 select-text 放开，共两处：
+     - 日志内容（LogView 的日志 pre；日志路径与「自动滚动」状态**不放**，那里不需要拖选）
+     - 终端区域（TerminalView 整页：xterm 的「选中即复制」依赖原生选择）
+   插件名/版本号也不走选择 —— 插件名是「点击即复制」（PluginsView 的 copyPluginName），
+   版本号刻意不可复制。
+   输入框 / 文本域 / contenteditable 始终可选中：否则没法用鼠标在框内框选或替换文字。
+   user-select 的「子元素取父元素 used value」语义决定了：给容器设 text 即整棵子树可选中，
+   容器内显式写了 select-none 的元素（如辅助键条）仍然保持不可选中。
+   -webkit-user-select 是给老 Safari / iOS 的（它们只认前缀版）。 */
+html {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input,
+textarea,
+[contenteditable='true'],
+.select-text {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ===== 鼠标拖拽：全局不产生「半透明快照」 =====
+   原生 HTML5 拖拽（mousedown + 移动）会给被拖元素画一张拖拽影像；控制台到处是 v-html
+   注入的内联 <svg> 图标，Chromium 把它当图片一样可拖，随手一点再拖就会冒出整块快照。
+   JS 侧已在 App.vue 用捕获阶段的 dragstart 统一拦掉（含 data-allow-drag 逃生口），
+   这里再给可拖的元素类型兜一道：WebKit 系只认 -webkit-user-drag（无标准属性名）。
+   不影响从系统里往页面拖文件（那是 dragover/drop，页面目前也没用到）。 */
+img,
+a,
+svg {
+  -webkit-user-drag: none;
+}
