@@ -1,5 +1,5 @@
 appname                    = Harness
-version                    = 2.0.0
+version                    = 2.1.1
 display_name               = DeepSeek Harness
 desc                       = <p>🐋DeepSeek Harness控制台，可自由切换dsh版本，支持登录官方账户并多账户管理，支持本地终端、插件管理、授权飞牛目录，支持网关访问+端口访问双入口。</p>
 platform                   = x86
@@ -15,5 +15,5 @@ desktop_applaunchname      = Harness.control
 checkport                  = false
 disable_authorization_path = false
 micro_app                  = true
-changelog                  = v2.0.0 修复日志页在 SSE 首帧未到时误报「日志文件不可用」的问题（首屏 REST 兜底 + 加载态），修复空日志不显示「暂无日志内容」；开发者与发布者调整为 superqiuc；基于 GitHub main（79535d5）编译。
-checksum                   = 6cb4e1070c6943f30a0ccdbe7fe68acd
+changelog                  = v2.1.1 同步上游 main（e091765）：设置页自定义 dsh 环境变量、插件分类筛选与实时搜索、目录授权适配飞牛 App 1.38.0、增强插件 0.7.3 等；并修复日志页首帧误报与空日志提示。
+checksum                   = e6683ec4f8eb90f10798a50a0e5b7eae

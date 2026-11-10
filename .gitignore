@@ -17,5 +17,4 @@ backend/embed
 # （12 MB 的 ELF），这里显式挡住。
 backend/backend
 
-# fpk 构建暂存与本地缓存
 .build/

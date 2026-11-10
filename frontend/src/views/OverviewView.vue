@@ -7,11 +7,12 @@ import { api, sseUrl, type Visitor, type DshStatus } from '@/serverapi'
 import { uiErrText, uiText, useI18n } from '@/composables/useI18n'
 import { useEventStream } from '@/composables/useEventStream'
 import { useBodyScrollLock } from '@/composables/useBodyScrollLock'
+import { useWideLayout } from '@/composables/useMobileLayout'
+import { useAccountCardVisible } from '@/composables/useAccountCardVisible'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import UpdateSection from '@/components/UpdateSection.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import AccountCard from '@/components/account/AccountCard.vue'
-import AboutDialog from '@/components/overview/AboutDialog.vue'
 import VisitorsCard from '@/components/overview/VisitorsCard.vue'
 import { isFnosApp } from '@/utils/fnosApp'
 import { icons } from '@/utils/icons'
@@ -23,7 +24,7 @@ const { status, loading, runtime } = storeToRefs(store)
 const toast = useToastStore()
 const { t } = useI18n()
 
-// dsh 卡片右上角「进入」的目标：当前访问环境下经飞牛网关访问 dsh 服务的地址。
+// 顶栏「标签页进入」的目标：当前访问环境下经飞牛网关访问 dsh 服务的地址。
 // 优先后端按请求头换算的结果（控制台访问源 + 控制台入口下的 /dsh/ 反代）；后端推不出
 // 时退回浏览器自身地址 —— document.baseURI 就是控制台当前地址，origin 拼上
 // consoleDshURL（/app/Harness/dsh/）即可。
@@ -42,7 +43,7 @@ const fnosEntry = computed(() => {
   }
 })
 
-// 「进入」：桌面浏览器新标签页打开；飞牛 App 内用全屏 iframe 承载 dsh。
+// 「标签页进入」：桌面浏览器新标签页打开；飞牛 App 内用全屏 iframe 承载 dsh。
 //
 // 历史原因：早先 dsh 是**独立的网关入口**（另一个 gatewayPrefix + dsh.sock），
 // App 的网关鉴权按入口（gatewayPrefix）注入，控制台入口的凭据带不过去 ——
@@ -138,19 +139,20 @@ const deleting = ref<string | null>(null)
 // （旧版只在 running === false 时显示「启动」）。
 const running = computed(() => status.value?.running !== false)
 
-// “关于”弹窗
-const aboutVisible = ref(false)
-
-function openAbout() {
-  aboutVisible.value = true
-}
-
+// 「DeepSeek 账号」卡片：桌面端（>=md）恒显示，移动端才受设置页的开关控制。
+// 判据用 useWideLayout()（就是 md 断点，与侧边栏 `hidden md:flex`、设置页那张
+// `md:hidden` 的控制台设置卡片严格互补），不另写宽度数值。
+// 注意这里是**卸载**卡片（v-if）而不是用 CSS 藏起来：卡片挂载时会拉一次账号快照，
+// 藏起来的卡片没必要继续请求后端。登录状态与账号数据都在 Pinia/后端，不受影响。
+const wideLayout = useWideLayout()
+const accountCardVisible = useAccountCardVisible()
+const showAccountCard = computed(() => wideLayout.value || accountCardVisible.value)
 
 // 停止/重启的二次确认弹窗：无论是否忙碌，每次点击都先弹窗确认
 const lifecycleAction = ref<'stop' | 'restart' | null>(null)
 const lifecycleDialogVisible = ref(false)
 
-// 任一弹窗（停止/重启确认、"关于"）或 App 内的 dsh 全屏容器打开期间锁定页面滚动
+// 停止/重启确认弹窗或 App 内的 dsh 全屏容器打开期间锁定页面滚动
 useBodyScrollLock(
   () => lifecycleDialogVisible.value || entryFrameVisible.value
 )
@@ -364,26 +366,23 @@ onBeforeUnmount(() => {
   <div class="pt-3 sm:pt-4 pb-8 sm:pb-12 px-4 sm:px-8 max-w-6xl mx-auto">
     <!-- 页头（图标 + 标题 + 右侧操作，统一卡片式标题栏） -->
     <PageHeader sticky class="mb-3" :title="t('overview_title')" :icon="icons.overview">
-      <button class="g-btn-secondary h-8 px-3 text-xs" @click="openAbout()">{{ t('about') }}</button>
+      <!-- 拿不到网关入口（非网关部署）时不显示，避免给出指向站点根的错地址 -->
+      <button
+        v-if="fnosEntry"
+        class="g-btn-secondary h-8 px-3 text-xs"
+        @click="openDshEntry"
+      >{{ t('dsh_enter') }}</button>
     </PageHeader>
 
     <!-- 卡片栅格：dsh 信息与启停 / 三个版本 / DeepSeek 账号 / 登录列表。
          桌面固定两列（见 style.css 的 .g-card-grid-2），四张卡片正好 2×2；
          窄屏沿用 .g-card-grid 的自适应列数（手机为单列）。 -->
     <div class="g-card-grid g-card-grid-2 g-fade-in">
-      <!-- ① dsh 服务信息与启停（右上角「进入」= 当前访问环境下的飞牛入口） -->
+      <!-- ① dsh 服务信息与启停（「标签页进入」在页头顶栏右侧，不在卡片里） -->
       <section class="g-card g-card-hover p-5 flex flex-col">
-        <div class="flex items-start justify-between gap-3 mb-4">
-          <div class="min-w-0">
-            <h2 class="font-display text-base font-semibold text-ink dark:text-white">DeepSeek Harness</h2>
-            <p class="text-xs text-ink-faint dark:text-[#8A8A92] mt-1">{{ t('overview_dsh_desc') }}</p>
-          </div>
-          <!-- 拿不到网关入口（非网关部署）时不显示，避免给出指向站点根的错地址 -->
-          <button
-            v-if="fnosEntry"
-            class="g-btn-secondary !h-8 !px-3 !text-xs !border-brand flex-shrink-0"
-            @click="openDshEntry"
-          >{{ t('dsh_enter') }}</button>
+        <div class="mb-4">
+          <h2 class="font-display text-base font-semibold text-ink dark:text-white">DeepSeek Harness</h2>
+          <p class="text-xs text-ink-faint dark:text-[#8A8A92] mt-1">{{ t('overview_dsh_desc') }}</p>
         </div>
 
         <!-- 进程信息：CPU / 内存 一行两个等宽小面板；PID 与运行时间折到下一行
@@ -408,19 +407,24 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- 启停操作：两列栅格，每个按钮的宽度与小面板一致（整行正好与上面的面板行同宽） -->
+        <!-- 启停操作：两列栅格，每个按钮的宽度与小面板一致（整行正好与上面的面板行同宽）。
+             停止时只剩「启动」，仍占第一列 —— 不要改成单列或 flex 撑满，否则按钮会被拉长；
+             「重启」对已停进程无意义，running === false 时隐藏。 -->
         <div class="grid grid-cols-2 gap-3 mt-auto">
-          <button v-if="!running" class="g-btn-primary !h-9 !text-sm bg-success hover:bg-success/90" :disabled="loading" @click="store.startDsh()">{{ t('dsh_start') }}</button>
+          <!-- 启动按钮是实心绿底 + 白字：用 success-ink（浅色下 base 的 #16A34A
+               配白字只有 3.3:1），深色下 success-ink 就是原来的 #10B981。 -->
+          <button v-if="!running" class="g-btn-primary !h-9 !text-sm bg-success-ink hover:bg-success-ink/90" :disabled="loading" @click="store.startDsh()">{{ t('dsh_start') }}</button>
           <button v-else class="g-btn-danger !h-9 !text-sm" :disabled="loading" @click="openLifecycleConfirm('stop')">{{ t('dsh_stop') }}</button>
-          <button class="g-btn-warning !h-9 !text-sm" :disabled="loading" @click="openLifecycleConfirm('restart')">{{ t('dsh_restart') }}</button>
+          <button v-if="running" class="g-btn-warning !h-9 !text-sm" :disabled="loading" @click="openLifecycleConfirm('restart')">{{ t('dsh_restart') }}</button>
         </div>
       </section>
 
       <!-- ② 三个版本：dsh 服务 / 插件市场 / 增强插件（控制台自身只能走 fpk 升级） -->
       <UpdateSection />
 
-      <!-- ③ DeepSeek 官方账号：头像 / 余额 / 多账号管理（登录弹窗在卡片内部） -->
-      <AccountCard />
+      <!-- ③ DeepSeek 官方账号：头像 / 余额 / 多账号管理（登录弹窗在卡片内部）。
+           移动端可在设置页关掉这张卡片（桌面端恒显示，见上面的 showAccountCard）。 -->
+      <AccountCard v-if="showAccountCard" />
 
       <!-- ④ 登录列表：卡片自身负责排序、桌面端限高与来源标记 -->
       <VisitorsCard
@@ -473,8 +477,5 @@ onBeforeUnmount(() => {
         ></iframe>
       </div>
     </Teleport>
-
-    <!-- 关于弹窗 -->
-    <AboutDialog v-model:visible="aboutVisible" />
   </div>
 </template>

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, type ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { storeToRefs } from 'pinia'
 import { usePluginsStore } from '@/stores/plugins'
 import { useSettingsStore } from '@/stores/settings'
 import { useToastStore } from '@/stores/toast'
-import { uiErrText, uiText, useI18n } from '@/composables/useI18n'
+import { uiErrText, uiText, useI18n, type I18nKey } from '@/composables/useI18n'
 import { api } from '@/serverapi'
+import { countByFilter, filterPlugins, type FilterCounts, type PluginFilter } from '@/utils/pluginFilter'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import MarqueeText from '@/components/MarqueeText.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -18,6 +19,48 @@ const { plugins, pluginsLoading } = storeToRefs(store)
 const settingsStore = useSettingsStore()
 const toast = useToastStore()
 const { t } = useI18n()
+
+// --- 顶栏下的分类筛选 + 实时搜索（纯前端过滤已拉取的列表，不再跑 dsh 命令）---
+//
+// 口径（什么算「已停用」、搜索匹配哪个字段）在 utils/pluginFilter.ts，那里有回归测试；
+// 这里只负责状态与渲染。
+const pluginFilter = ref<PluginFilter>('all')
+const pluginFilters: { value: PluginFilter; label: I18nKey }[] = [
+  { value: 'all', label: 'plugin_filter_all' },
+  { value: 'enabled', label: 'plugin_status_enabled' },
+  { value: 'disabled', label: 'plugin_status_disabled' }
+]
+const pluginQuery = ref('')
+
+// 计数只在「列表加载结束」的时刻更新：启停 / 卸载 / 重置后的重拉会先清空 store 里的
+// plugins 再置 loading（那条 dsh 命令要 1~3 秒）。直接按当前列表算计数，三个按钮和
+// 搜索框会在重拉窗口里整个消失再出现；加载中沿用上一次的数量就没有这个闪烁。
+const filterCounts = ref<FilterCounts>({ all: 0, enabled: 0, disabled: 0 })
+watch(
+  [plugins, pluginsLoading],
+  ([list, loading]) => {
+    if (!loading) filterCounts.value = countByFilter(list)
+  },
+  { immediate: true }
+)
+
+// 数量为 0 的分类不渲染按钮；当前分类恰好归零（例如刚把最后一个停用插件启用）时回到
+// 「全部」—— 否则会留下一个看不见的过滤条件：列表空白，且没有任何按钮是选中态。
+const visibleFilters = computed(() => pluginFilters.filter((f) => filterCounts.value[f.value] > 0))
+watch(filterCounts, (counts) => {
+  if (counts[pluginFilter.value] === 0) pluginFilter.value = 'all'
+})
+
+// 搜索框只在插件超过 10 个时出现（10 个及以下一屏能看完，不需要它）；收起时清掉搜索词，
+// 否则会留下一个看不见、却仍在过滤列表的条件。
+const showSearch = computed(() => filterCounts.value.all > 10)
+watch(showSearch, (show) => {
+  if (!show) pluginQuery.value = ''
+})
+
+const visiblePlugins = computed(() =>
+  filterPlugins(plugins.value, pluginFilter.value, pluginQuery.value)
+)
 
 // 卸载/重置插件的确认弹窗状态
 const uninstallDialogVisible = ref(false)
@@ -264,6 +307,50 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <!-- 分类筛选 + 实时搜索（顶栏下）：
+         - 每个分类按钮带该分类的数量，数量为 0 的分类连按钮一起隐藏；
+         - 搜索框只在插件超过 10 个时出现，**没有搜索按钮**，输入即过滤
+           （v-model → visiblePlugins）；两者都没有时整行不渲染；
+         - 宽屏时搜索框贴右；宽度不够时它整块换到下一行（flex-1 + min-w-48 +
+           父级 flex-wrap，见下面搜索框上的注释）。 -->
+    <div v-if="visibleFilters.length > 0 || showSearch" class="mb-3 flex flex-wrap items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2" role="group" :aria-label="t('plugin_filter_group')">
+        <button
+          v-for="f in visibleFilters"
+          :key="f.value"
+          type="button"
+          class="g-chip h-8 px-3.5 transition-colors"
+          :class="pluginFilter === f.value ? 'g-chip-active' : 'hover:bg-black/10 dark:hover:bg-white/20'"
+          :aria-pressed="pluginFilter === f.value"
+          @click="pluginFilter = f.value"
+        >
+          {{ t(f.label) }}
+          <!-- 计数不要再叠 opacity：选中态是白字压在 brand 底上（4.47:1，已是这种底色的
+               上限），再降 70% 不透明度就掉到约 3.0:1，12px 文本低于 AA 4.5。 -->
+          <span class="tabular-nums">{{ filterCounts[f.value] }}</span>
+        </button>
+      </div>
+      <!-- 搜索框：宽屏固定 224px 贴右；窄屏用 flex-1 + min-w-48 —— 这一行放得下就
+           占掉剩余宽度留在同一行，放不下才整块换到下一行（换行后 flex-1 撑满一行）。
+           不用 w-full sm:w-56 那种按断点写死的做法：600px 上下明明放得下，也没必要
+           把搜索框甩到第二行。 -->
+      <div v-if="showSearch" class="relative min-w-48 flex-1 sm:ml-auto sm:w-56 sm:flex-none">
+        <span
+          class="icon-svg pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint"
+          v-html="icons.search"
+        ></span>
+        <input
+          v-model="pluginQuery"
+          type="search"
+          class="g-input h-8 py-0 pl-8 pr-3 text-xs"
+          :placeholder="t('plugin_search_placeholder')"
+          :aria-label="t('plugin_search_placeholder')"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+    </div>
+
     <!-- 每个插件一张卡片，按容器宽度自适应分栏（.g-card-grid）；
          加载/空态占满整行。 -->
     <div class="g-card-grid g-fade-in">
@@ -276,8 +363,14 @@ onBeforeUnmount(() => {
         {{ t('plugin_empty') }}
       </div>
 
+      <!-- 有插件、但被分类/搜索过滤空了：与「一个插件都没有」分开说，
+           否则用户会以为是列表没加载出来 -->
+      <div v-else-if="visiblePlugins.length === 0" class="col-span-full py-8 text-center text-sm text-ink-faint dark:text-[#8A8A92]">
+        {{ t('plugin_search_empty') }}
+      </div>
+
       <template v-else>
-        <div v-for="p in plugins" :key="p.name" class="g-card g-card-hover p-4 flex flex-col">
+        <div v-for="p in visiblePlugins" :key="p.name" class="g-card g-card-hover p-4 flex flex-col">
           <div class="min-w-0">
             <!-- 插件名：点击即复制（提 issue / 报错时要贴名字）。按钮化而不是可拖选 ——
                  全局默认禁止文本选择（见 style.css），这里连 select-text 也不加，点击的

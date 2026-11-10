@@ -13,9 +13,10 @@ import (
 	"strings"
 )
 
-// secret.go —— 落盘加密（AES-256-GCM）与主密钥管理。当前两处用到它：
+// secret.go —— 落盘加密（AES-256-GCM）与主密钥管理。当前三处用到它：
 //
 //   - 快捷指令的「命令内容」（quickcmds.go，逐条一个信封，名称/开关仍是明文）；
+//   - 设置页的**自定义环境变量**（dsh_env.go，变量名明文、变量值逐条一个信封）；
 //   - 控制台的 **DeepSeek 账号库**（accountvault.go，整份文档一个信封）。
 //
 // 参考实现：terminal / webssh 两个项目的同名文件（`secret.go` / `internal/secret`）。
@@ -30,7 +31,9 @@ import (
 // AAD 绑定 `harness:v1:quickcmd:<指令 id>:<作用域>`：把某条指令的密文剪到另一条指令上
 // 会直接解密失败（GCM 的认证标签覆盖 AAD），而不是悄悄把甲的命令接到乙的按钮上（按钮上
 // 写的是乙的名字，点下去跑的是甲的内容）。账号库用 `harness:v1:accountvault:<作用域>`，
-// 于是两份文件之间剪贴密文同样解不开（见 accountVaultAADField）。
+// 于是两份文件之间剪贴密文同样解不开（见 accountVaultAADField）。自定义环境变量用
+// `harness:v1:dsh-env:<变量名>:<作用域>`（见 dsh_env.go 的 dshEnvAADField）：同一张表里
+// 两条变量的密文互换位置会解密失败。
 
 const (
 	// masterKeyLen 是 AES-256 的密钥长度。
