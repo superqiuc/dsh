@@ -5,20 +5,49 @@ import { usePluginsStore } from '@/stores/plugins'
 import { useSettingsStore } from '@/stores/settings'
 import { useToastStore } from '@/stores/toast'
 import { uiErrText, uiText, useI18n, type I18nKey } from '@/composables/useI18n'
-import { api } from '@/serverapi'
+import { api, type PluginInfo, type PluginUpdateEntry } from '@/serverapi'
 import { countByFilter, filterPlugins, type FilterCounts, type PluginFilter } from '@/utils/pluginFilter'
+import { resolveCardUpdates } from '@/utils/pluginUpdates'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import MarqueeText from '@/components/MarqueeText.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PluginInstallDialog from '@/components/PluginInstallDialog.vue'
+import PluginDetailDialog from '@/components/PluginDetailDialog.vue'
 import { icons } from '@/utils/icons'
 import { copyText } from '@/utils/clipboard'
 import { captureScroll, restoreScroll } from '@/utils/scroll'
+import { usePluginInstall } from '@/composables/usePluginInstall'
+import { usePluginUpdateChecks } from '@/composables/usePluginUpdateChecks'
 
 const store = usePluginsStore()
 const { plugins, pluginsLoading } = storeToRefs(store)
 const settingsStore = useSettingsStore()
 const toast = useToastStore()
 const { t } = useI18n()
+
+// --- 更新状态（手动单卡检查 + 后台定时检测）---
+//
+// 先声明合并视图：下面的「可更新」筛选与计数要用它。具体动作（请求 / 轮询 / 安装）见
+// 文件后面的「检查更新」一节。手动检查的结果存在模块级（见 usePluginUpdateChecks），
+// 切子页面回来仍然有效；后台结果由页面轮询后端缓存补齐。
+//
+// 与官方插件中心一致：只把「比当前版本新、非预发布、未废弃、与当前 dsh 兼容」的版本当作
+// 候选（判定在 backend/plugin_update.go）。手动检查按插件、异步；后台结果来自每小时的
+// 定时检测（内存缓存，页面轮询）。
+// 手动检查的结果存模块级（切子页面不丢），见 usePluginUpdateChecks。
+const { checks: updateChecks } = usePluginUpdateChecks()
+
+// 后台定时检测（每小时）的结果：市场/增强插件之外、其它插件在镜像源上有没有新版本。
+// 页面只轮询这份**内存缓存**（GET /api/plugins/updates，不联网、不起 `dsh plugin list`），
+// 拿到后直接体现在卡片上；手动点单卡检查的结果优先于它。
+const backgroundUpdates = ref<Record<string, PluginUpdateEntry>>({})
+
+// cardUpdates 是模板用的合并视图：单卡手动检查 > 后台定时检测。
+// 规则（含「手动结论必须仍对得上已装版本，否则回退后台结论」）在 utils/pluginUpdates.ts，
+// 那里有单测 —— 页面之外换过版本时，旧的手动结论不能再生效，否则会给出降级箭头。
+const cardUpdates = computed(() =>
+  resolveCardUpdates(plugins.value, updateChecks.value, backgroundUpdates.value)
+)
 
 // --- 顶栏下的分类筛选 + 实时搜索（纯前端过滤已拉取的列表，不再跑 dsh 命令）---
 //
@@ -28,18 +57,25 @@ const pluginFilter = ref<PluginFilter>('all')
 const pluginFilters: { value: PluginFilter; label: I18nKey }[] = [
   { value: 'all', label: 'plugin_filter_all' },
   { value: 'enabled', label: 'plugin_status_enabled' },
-  { value: 'disabled', label: 'plugin_status_disabled' }
+  { value: 'disabled', label: 'plugin_status_disabled' },
+  { value: 'updatable', label: 'plugin_filter_updatable' }
 ]
 const pluginQuery = ref('')
 
+// 「可更新」= 这张卡片当前正挂着「有新版本」提示（手动检查结果优先于后台缓存）。
+function isPluginUpdatable(p: PluginInfo): boolean {
+  return cardUpdates.value[p.name]?.hasUpdate === true
+}
+
 // 计数只在「列表加载结束」的时刻更新：启停 / 卸载 / 重置后的重拉会先清空 store 里的
-// plugins 再置 loading（那条 dsh 命令要 1~3 秒）。直接按当前列表算计数，三个按钮和
+// plugins 再置 loading（那条 dsh 命令要 1~3 秒）。直接按当前列表算计数，四个按钮和
 // 搜索框会在重拉窗口里整个消失再出现；加载中沿用上一次的数量就没有这个闪烁。
-const filterCounts = ref<FilterCounts>({ all: 0, enabled: 0, disabled: 0 })
+// 「可更新」还跟着更新状态变（手动检查 / 后台轮询），所以把 cardUpdates 也作为依赖。
+const filterCounts = ref<FilterCounts>({ all: 0, enabled: 0, disabled: 0, updatable: 0 })
 watch(
-  [plugins, pluginsLoading],
-  ([list, loading]) => {
-    if (!loading) filterCounts.value = countByFilter(list)
+  [plugins, pluginsLoading, cardUpdates],
+  ([list, loading, updates]) => {
+    if (!loading) filterCounts.value = countByFilter(list, (p) => updates[p.name]?.hasUpdate === true)
   },
   { immediate: true }
 )
@@ -59,7 +95,7 @@ watch(showSearch, (show) => {
 })
 
 const visiblePlugins = computed(() =>
-  filterPlugins(plugins.value, pluginFilter.value, pluginQuery.value)
+  filterPlugins(plugins.value, pluginFilter.value, pluginQuery.value, isPluginUpdatable)
 )
 
 // 卸载/重置插件的确认弹窗状态
@@ -120,6 +156,8 @@ async function removePlugin(name: string) {
   try {
     const p = await api.removePlugin(name)
     if (p.ok) {
+      clearUpdateCheck(name)
+      clearBackgroundUpdate(name)
       // 卸载后清除缓存并重新拉取列表（保持滚动位置）
       await reloadKeepingScroll()
       toast.show(t('plugin_removed', { name: p.removed }), 'success')
@@ -147,6 +185,8 @@ async function resetPlugins() {
     toast.show(uiErrText(e, t('common_op_failed')), 'error')
   } finally {
     resetting.value = false
+    updateChecks.value = {}
+    backgroundUpdates.value = {}
     // 重置后清除缓存并重新拉取列表（保持滚动位置）
     await reloadKeepingScroll()
   }
@@ -241,9 +281,147 @@ async function executeRestart() {
   }
 }
 
+// --- 安装插件（顶栏「安装」按钮 + 弹窗）---
+//
+// 提交规格、轮询后台任务、进度/错误文案与结果提示都在 usePluginInstall 里（模块级单例：
+// 安装期间切子页面不丢进度，重新挂载也不会起出第二条轮询）。本页只负责三件事：
+// 弹窗可见性、「重启生效」提示条、装完重拉列表（保持滚动位置）。
+const {
+  installing: installingPlugin,
+  progress: installProgress,
+  error: installError,
+  result: installResult,
+  start: startPluginInstall,
+  resume: resumeInstallIfRunning,
+  pendingResult: pendingInstallResult,
+  consumeResult: consumeInstallResult,
+  clearError: clearInstallError
+} = usePluginInstall()
+
+const installDialogVisible = ref(false)
+
+// 插件详情弹窗：点信息按钮才读文档（懒加载），弹窗内展示 meta.detail 或 README。
+// 缓存/请求都在 usePluginDetail 里（模块级），关掉弹窗再打开同一插件不重复读盘。
+const detailDialogVisible = ref(false)
+const detailTarget = ref('')
+
+function openPluginDetail(name: string) {
+  detailTarget.value = name
+  detailDialogVisible.value = true
+}
+
+function onInstallClick() {
+  clearInstallError()
+  installDialogVisible.value = true
+}
+
+// 消费一次成功结果：需要重启的挂「重启生效」提示条（与启停开关同一条），然后重拉列表。
+// 失败结果已由 composable 弹过 toast 并留在弹窗里，这里不需要动作。
+async function applyInstallResult() {
+  const pending = pendingInstallResult()
+  if (!pending) return
+  consumeInstallResult(pending.seq)
+  // 成功才关弹窗：失败时错误要留在弹窗里，用户改完规格可直接重试
+  installDialogVisible.value = false
+  // 装的就是这个包（可能是卡片上的「安装」升级）：它的「有新版本」标记已经过期
+  if (pending.status.name) {
+    clearUpdateCheck(pending.status.name)
+    clearBackgroundUpdate(pending.status.name)
+  }
+  if (pending.status.restart && pending.status.name) needsRestartPlugin.value = pending.status.name
+  await reloadKeepingScroll()
+}
+
+// 结果可能在页面挂载期间落定，也可能在别的页面落定（回到本页时才消费）
+watch(installResult, () => void applyInstallResult(), { immediate: true })
+
+// --- 检查更新（卡片状态右侧的图标按钮）---
+//
+// 与官方插件中心一致：只把「比当前版本新、非预发布、未废弃、与当前 dsh 兼容」的版本当作
+// 候选（判定在 backend/plugin_update.go）。检查是按插件的、异步的：按钮转圈，结果只影响
+// 这张卡片；有更新时版本号右侧显示「→ 新版本」，卸载按钮左侧出现黄色「安装」。
+// 「安装」复用安装任务（dsh plugin add name@version）：先跑插件命令，再按既有流程重拉列表，
+// bundle 会挂出「重启生效」提示条。
+const updatingPlugin = ref<string | null>(null)
+
+const BACKGROUND_UPDATE_POLL_MS = 5 * 60 * 1000
+let backgroundTimer: number | null = null
+
+async function loadBackgroundUpdates() {
+  try {
+    const r = await api.pluginUpdates()
+    backgroundUpdates.value = r.updates || {}
+  } catch {
+    // 拿不到后台结论就当没有：不影响列表本身的加载与操作
+  }
+}
+
+function isCheckingUpdate(name: string): boolean {
+  return updateChecks.value[name]?.status === 'checking'
+}
+
+function clearBackgroundUpdate(name: string) {
+  if (!(name in backgroundUpdates.value)) return
+  const next = { ...backgroundUpdates.value }
+  delete next[name]
+  backgroundUpdates.value = next
+}
+
+// clearUpdateCheck 丢掉某个插件的检查结果（装/卸之后它就过期了）。
+function clearUpdateCheck(name: string) {
+  if (!(name in updateChecks.value)) return
+  const next = { ...updateChecks.value }
+  delete next[name]
+  updateChecks.value = next
+}
+
+async function checkPluginUpdate(name: string) {
+  if (isCheckingUpdate(name)) return
+  updateChecks.value = { ...updateChecks.value, [name]: { status: 'checking' } }
+  try {
+    const r = await api.pluginUpdateCheck(name)
+    updateChecks.value = {
+      ...updateChecks.value,
+      [name]: { status: 'done', latest: r.latest, hasUpdate: r.hasUpdate, current: r.current }
+    }
+    if (!r.hasUpdate) {
+      // 后台缓存里可能还挂着上一次的「有更新」，这次手查是更新的结论 —— 清掉它，
+      // 避免刷新页面后又冒出来（下一次小时级检查会重新算）。
+      clearBackgroundUpdate(name)
+      toast.show(t('plugin_update_none', { version: r.current || '' }), 'info', 3000)
+    }
+  } catch (e) {
+    // 失败不留「有更新」标记：换源或控制台恢复后重查即可
+    const next = { ...updateChecks.value }
+    delete next[name]
+    updateChecks.value = next
+    toast.show(uiErrText(e, t('plugin_update_check_failed')), 'error', 5000)
+  }
+}
+
+async function installUpdate(p: PluginInfo) {
+  const latest = cardUpdates.value[p.name]?.latest || ''
+  if (!latest || installingPlugin.value) return
+  updatingPlugin.value = p.name
+  try {
+    // 更新标记由 applyInstallResult 在安装成功时清掉；失败时保留，用户可直接重试
+    await startPluginInstall(`${p.name}@${latest}`)
+  } finally {
+    updatingPlugin.value = null
+  }
+}
+
 onMounted(() => {
   // 命中缓存则直接使用，避免切换子页面时重复命令拉取
   store.loadPlugins()
+  // 后台定时检测的结果（内存缓存）随页面打开同步一次，之后每 5 分钟拉一次：
+  // 接口只读缓存，不会起 `dsh plugin list` 子进程。
+  void loadBackgroundUpdates()
+  backgroundTimer = window.setInterval(() => void loadBackgroundUpdates(), BACKGROUND_UPDATE_POLL_MS)
+  // 后台可能还有一次安装（切换页面回来 / 刷新页面）：接上进度，并直接把弹窗打开
+  void resumeInstallIfRunning().then((running) => {
+    if (running) installDialogVisible.value = true
+  })
 
   // 量顶栏高度并跟着它变（视口宽度、语言、按钮换行都会改高度）。
   // 组件根节点就是那层 sticky 遮罩，量它的高度 = 顶栏下沿到视口顶的距离（静止与固定时相同）。
@@ -260,6 +438,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   headerObserver?.disconnect()
   headerObserver = null
+  if (backgroundTimer !== null) {
+    window.clearInterval(backgroundTimer)
+    backgroundTimer = null
+  }
 })
 </script>
 
@@ -267,6 +449,10 @@ onBeforeUnmount(() => {
   <div class="pt-3 sm:pt-4 pb-8 sm:pb-12 px-4 sm:px-8 max-w-6xl mx-auto">
     <!-- 页头（图标 + 标题 + 刷新/重置按钮）；ref 用于实测高度，给下面的 sticky 提示条定位 -->
     <PageHeader ref="headerRef" sticky class="mb-3" :title="t('nav_plugins')" :icon="icons.plugin">
+      <!-- 安装插件：打开弹窗填规格；安装进行中再次点开可看进度（任务在后台跑） -->
+      <button class="g-btn-secondary h-8 px-3 text-xs" @click="onInstallClick">
+        {{ t('plugin_install') }}
+      </button>
       <button class="g-btn-secondary h-8 px-3 text-xs" :disabled="pluginsLoading" @click="store.loadPlugins(true)">
         {{ t('plugin_refresh') }}
       </button>
@@ -371,22 +557,41 @@ onBeforeUnmount(() => {
 
       <template v-else>
         <div v-for="p in visiblePlugins" :key="p.name" class="g-card g-card-hover p-4 flex flex-col">
-          <div class="min-w-0">
-            <!-- 插件名：点击即复制（提 issue / 报错时要贴名字）。按钮化而不是可拖选 ——
-                 全局默认禁止文本选择（见 style.css），这里连 select-text 也不加，点击的
-                 语义就是「复制」，复制成功弹 toast。
-                 过长的插件名由 MarqueeText 自动向左循环滚动显示。 -->
+          <!-- 第一行：插件名 + 版本号（左）与详情按钮（右上角，无边框纯图标）。
+               详情按钮只负责打开弹窗 —— 文档在弹窗打开时才读（懒加载），不预取。 -->
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0 flex-1">
+              <!-- 插件名：点击即复制（提 issue / 报错时要贴名字）。按钮化而不是可拖选 ——
+                   全局默认禁止文本选择（见 style.css），这里连 select-text 也不加，点击的
+                   语义就是「复制」，复制成功弹 toast。
+                   过长的插件名由 MarqueeText 自动向左循环滚动显示。 -->
+              <button
+                type="button"
+                class="block w-full text-left font-mono text-sm font-medium text-ink dark:text-white hover:text-brand dark:hover:text-brand transition-colors"
+                :title="t('plugin_copy_name')"
+                :aria-label="t('plugin_copy_name')"
+                @click="copyPluginName(p.name)"
+              >
+                <MarqueeText :text="p.name" />
+              </button>
+              <!-- 版本号：刻意不可复制、不可点击；检查到更新时在右侧追加「→ 新版本号」 -->
+              <div class="text-xs text-ink-faint dark:text-[#8A8A92] mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span>{{ p.version }}</span>
+                <template v-if="cardUpdates[p.name]?.hasUpdate">
+                  <span aria-hidden="true">→</span>
+                  <span class="font-medium text-warning-ink dark:text-[#FBBF24]">{{ cardUpdates[p.name]?.latest }}</span>
+                </template>
+              </div>
+            </div>
             <button
               type="button"
-              class="block w-full text-left font-mono text-sm font-medium text-ink dark:text-white hover:text-brand dark:hover:text-brand transition-colors"
-              :title="t('plugin_copy_name')"
-              :aria-label="t('plugin_copy_name')"
-              @click="copyPluginName(p.name)"
+              class="g-btn-ghost -mr-1 -mt-1 h-8 w-8 flex-shrink-0 p-0"
+              :aria-label="t('plugin_detail_open', { name: p.name })"
+              :title="t('plugin_detail_open', { name: p.name })"
+              @click="openPluginDetail(p.name)"
             >
-              <MarqueeText :text="p.name" />
+              <span class="w-4 h-4" v-html="icons.info"></span>
             </button>
-            <!-- 版本号：刻意不可复制、不可点击 -->
-            <div class="text-xs text-ink-faint dark:text-[#8A8A92] mt-1.5">{{ p.version }}</div>
           </div>
 
           <!-- 第二栏：启停开关 + 状态标记（紧邻开关右侧，disabled 状态来自 dsh.profile.bundles）
@@ -426,17 +631,57 @@ onBeforeUnmount(() => {
             <span v-else class="g-status bg-black/5 text-ink-soft dark:bg-white/10 dark:text-[#A6A6AD]">
               {{ t('plugin_plain_dependency') }}
             </span>
+            <!-- 检查更新：状态右侧的纯图标按钮；检查中换成转圈 -->
             <button
-              class="g-btn-danger h-8 px-3 text-xs ml-auto"
-              :disabled="removingPlugin === p.name || resetting"
-              @click="onUninstallClick(p.name)"
+              type="button"
+              class="g-btn-ghost h-8 w-8 flex-shrink-0 p-0"
+              :aria-label="t('plugin_check_update', { name: p.name })"
+              :title="t('plugin_check_update', { name: p.name })"
+              :disabled="isCheckingUpdate(p.name)"
+              :aria-busy="isCheckingUpdate(p.name)"
+              @click="checkPluginUpdate(p.name)"
             >
-              {{ removingPlugin === p.name ? t('plugin_removing') : t('plugin_uninstall') }}
+              <span
+                v-if="isCheckingUpdate(p.name)"
+                class="w-4 h-4 rounded-full border-2 border-line border-t-brand animate-spin"
+              ></span>
+              <span v-else class="w-4 h-4" v-html="icons.refresh"></span>
             </button>
+            <!-- 右侧动作：有新版本时黄色「安装」出现在卸载左侧 -->
+            <div class="ml-auto flex flex-wrap items-center gap-2">
+              <button
+                v-if="cardUpdates[p.name]?.hasUpdate"
+                class="g-btn-warning h-8 px-3 text-xs"
+                :disabled="installingPlugin || updatingPlugin === p.name"
+                :aria-label="t('plugin_update_aria', { name: p.name, version: cardUpdates[p.name]?.latest })"
+                @click="installUpdate(p)"
+              >
+                {{ updatingPlugin === p.name ? t('plugin_updating') : t('plugin_update') }}
+              </button>
+              <button
+                class="g-btn-danger h-8 px-3 text-xs"
+                :disabled="removingPlugin === p.name || resetting"
+                @click="onUninstallClick(p.name)"
+              >
+                {{ removingPlugin === p.name ? t('plugin_removing') : t('plugin_uninstall') }}
+              </button>
+            </div>
           </div>
         </div>
       </template>
     </div>
+
+    <!-- 插件详情弹窗（只读）：打开才读文档；meta.detail 优先、README 兜底 -->
+    <PluginDetailDialog v-model:visible="detailDialogVisible" :name="detailTarget" />
+
+    <!-- 安装插件弹窗（安装是后台任务：关掉它不会中断，进度/结果由本页轮询） -->
+    <PluginInstallDialog
+      v-model:visible="installDialogVisible"
+      :installing="installingPlugin"
+      :progress="installProgress"
+      :error-text="installError"
+      @submit="startPluginInstall"
+    />
 
     <!-- 重启生效二次确认弹窗（与概览页重启逻辑一致：默认插槽里放原确认文案 +
          「有插件操作在跑」时的额外风险提示，弹窗结构与样式约定见 AGENTS 第 3 节） -->

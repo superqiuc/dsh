@@ -57,7 +57,7 @@ const (
 	// 拼出挂载前缀），更早的版本在控制台的子路径挂载（<AdminBaseURL>/dsh）下必然
 	// 404；这条线现在抬到 0.2.0-rc.1 —— 0.2.0 之前的客户端
 	// 已不再维护（当年针对它们的反代兼容代码也随 dsh 上游自修陆续移除，见 README
-	// 「浏览器兼容模式」），控制台只对 0.2.0-rc.1 及更新的版本负责。
+	// 「反代对 dsh 产物的改写（已全部移除）」），控制台只对 0.2.0-rc.1 及更新的版本负责。
 	dshMinVersion = "0.2.0-rc.1"
 	// dshMirrorTimeout 是单次镜像源请求的超时（「5 秒没反应就判这次失败」）。
 	dshMirrorTimeout = 5 * time.Second
@@ -1305,6 +1305,13 @@ func (m *ServerManager) Switch(version string) error {
 		logWarn("[dsh] failed to update terminal dsh shim: %v", err)
 	}
 	logInfo("[dsh] switching version %s -> %s", prev, version)
+
+	// 换版本后「其它插件可更新」的旧结论要作废：候选是按**当时选中的 dsh 版本**做兼容性
+	// 筛选的（plugin_update.go 的 newestCompatiblePluginVersion），旧结论可能指向一个在新
+	// 版本上已不兼容的版本。下一次小时级检测（或单卡手动检查）会重新算。
+	if m.upd != nil {
+		m.upd.clearPagePluginUpdates()
+	}
 
 	// 停旧、起新：停机与启动都走统一钩子（dshStopFn / startDshCapturedFn），与
 	// 「市场变更后重启 dsh」一致 —— 启动后必须经 captureDshSession 换取本代会话凭据，

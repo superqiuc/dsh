@@ -74,9 +74,6 @@ export interface AppConfig {
   // 「自定义环境变量」开关（默认关闭）：打开后把 dsh-env.json 里的变量注入 dsh 进程。
   // 变量值加密落盘（见后端 dsh_env.go）；保存配置后仍需重启 dsh 才生效。
   dshEnvEnabled: boolean
-  // 浏览器兼容模式：修正 dsh 客户端只适配 V8 的原生函数格式判断，
-  // 供 Firefox/Zen/Safari 等非 V8 内核正常加载会话历史。默认关闭。
-  browserCompat: boolean
 }
 
 export interface DshStatus {
@@ -193,6 +190,53 @@ export interface UpdateStatus {
 }
 
 export type UpdateKind = 'dsh' | 'market' | 'advanced'
+
+// 后台定时检测缓存的单插件更新结论（GET /api/plugins/updates）。只有有更新的才在表里。
+export interface PluginUpdateEntry {
+  latestVersion: string
+  hasUpdate: boolean
+}
+
+// 插件更新检查（GET /api/plugins/update-check）。
+export interface PluginUpdateCheck {
+  ok: boolean
+  name: string
+  current: string
+  latest?: string
+  hasUpdate: boolean
+}
+
+// 插件详情文档（GET /api/plugins/detail）。
+export interface PluginDetailPayload {
+  ok: boolean
+  // found：有正文；none：既没有 meta.detail 也没有 README
+  status: 'found' | 'none'
+  // locale：meta.detail 指定的文档；readme：兜底读到的 README
+  origin?: 'locale' | 'readme'
+  path?: string
+  markdown?: string
+}
+
+// 插件页「安装插件」的后台任务状态（GET /api/plugins/install/status）。
+//
+// 安装是异步的：pnpm 下载/构建可能要几十秒到几分钟，同步请求会被平台网关掐断
+// （见后端 plugin_install.go）。POST 只负责入队，进度与结果都从这份状态读。
+export interface PluginInstallStatus {
+  running: boolean
+  // installing（进行中）/ done（成功）/ failed（失败）
+  phase?: 'installing' | 'done' | 'failed'
+  spec?: string
+  // 装进来的包名与版本（Git 仓库/本地目录也能从 profile 清单里认出来；
+  // 认不出时为空，界面仍提示「安装完成」）
+  name?: string
+  version?: string
+  // 需要重启 dsh 服务新装的插件才会生效（bundle / 客户端插件 / 原生依赖）
+  restart?: boolean
+  message?: string
+  messageRef?: UIRef
+  error?: string
+  errorRef?: UIRef
+}
 
 // 由控制台管理的 profile 插件（同一套弹窗与动作流程，见 ManagedPluginDialog.vue）。
 export type ManagedPluginKind = 'market' | 'advanced'
@@ -513,6 +557,22 @@ export const api = {
     }),
   // 插件管理：列表 / 卸载 / 重置（dsh plugin --profile web）
   listPlugins: () => request<{ ok: boolean; plugins: PluginInfo[]; raw?: string }>('/api/plugins'),
+  // 安装插件：spec 支持包名 / 包名@版本 / 仓库地址 / 本地绝对路径 / 完整的
+  // `dsh plugin add …` 命令（解析与校验在后端）。只入队，结果经 pluginInstallStatus 轮询。
+  installPlugin: (spec: string) =>
+    request<{ ok: boolean; started?: boolean; spec?: string; name?: string }>('/api/plugins/install', {
+      method: 'POST',
+      body: JSON.stringify({ spec })
+    }),
+  pluginInstallStatus: () => request<{ ok: boolean } & PluginInstallStatus>('/api/plugins/install/status'),
+  // 插件详情：按官方顺序读（locale 的 meta.detail 优先，README 兜底）；status=none 表示无内容。
+  pluginDetail: (name: string, lang: string) =>
+    request<PluginDetailPayload>(`/api/plugins/detail?name=${encodeURIComponent(name)}&lang=${encodeURIComponent(lang)}`),
+  // 检查某个插件在所选镜像源上有没有更新（官方语义：非预发布、未废弃、与当前 dsh 兼容）
+  pluginUpdateCheck: (name: string) =>
+    request<PluginUpdateCheck>(`/api/plugins/update-check?name=${encodeURIComponent(name)}`),
+  // 后台定时检测出的「插件页其它插件」更新（内存缓存，只读、不联网）
+  pluginUpdates: () => request<{ ok: boolean; updates: Record<string, PluginUpdateEntry> }>('/api/plugins/updates'),
   removePlugin: (name: string) =>
     request<{ ok: boolean; removed: string; msg: string }>('/api/plugins/remove', {
       method: 'POST',
